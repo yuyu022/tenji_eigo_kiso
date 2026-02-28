@@ -5,34 +5,35 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>点字英語の基礎</title>
 <style>
-  body{
-    margin:0; padding:24px;
-    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
-    background:#0b0f14; color:#fff;
-    display:flex; justify-content:center; align-items:center;
-    min-height:100vh;
-  }
-  .version{
-    position:fixed;
-    top:10px;
-    left:14px;
-    font-size:13px;
-    opacity:0.7;
-  }
-  .wrap{
-    width:min(640px,100%);
-    display:flex;
-    flex-direction:column;
-    gap:20px;
-  }
-  h1{ font-size:22px; margin:0 0 10px 0; }
-  button{
-    height:95px; font-size:26px; font-weight:700;
-    border-radius:16px; border:2px solid rgba(255,255,255,0.2);
-    background:#152033; color:#fff; width:100%;
-  }
-  button:disabled{ opacity:0.5; }
-  .status{ font-size:14px; opacity:0.8; }
+body{
+  margin:0; padding:24px;
+  font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+  background:#0b0f14; color:#fff;
+  display:flex; justify-content:center; align-items:center;
+  min-height:100vh;
+}
+.version{
+  position:fixed;
+  top:10px; left:14px;
+  font-size:13px;
+  opacity:0.7;
+}
+.wrap{
+  width:min(640px,100%);
+  display:flex;
+  flex-direction:column;
+  gap:20px;
+}
+h1{ font-size:22px; margin:0 0 10px 0; }
+button{
+  height:95px; font-size:26px; font-weight:700;
+  border-radius:16px;
+  border:2px solid rgba(255,255,255,0.2);
+  background:#152033; color:#fff;
+  width:100%;
+}
+button:disabled{ opacity:0.5; }
+.status{ font-size:14px; opacity:0.8; }
 </style>
 </head>
 <body>
@@ -51,51 +52,91 @@
 
 <script>
 /* =========================================================
- *  パラメータ宣言部
- * ========================================================= */
+   パラメータ宣言部
+========================================================= */
 const CONFIG = {
 
+  /* -------------------------------------------------------
+     アプリ基本情報
+     ・version  : 画面左上に表示されるバージョン番号
+     ・created  : 作成日時（表示専用）
+     ------------------------------------------------------- */
   app: {
     version: "v1.0.1",
-    created: "2026/03/01 01:30"
+    created: "2026/03/01 01:40"
   },
 
+  /* -------------------------------------------------------
+     音声読み上げ設定（SpeechSynthesis用）
+     ・lang   : 読み上げ言語（通常は ja-JP）
+     ・rate   : 読み上げ速度（1.0が標準）
+                0.8 = ややゆっくり
+                1.2 = やや速い
+     ・pitch  : 声の高さ（通常は 1.0）
+     ・volume : 音量（0.0〜1.0）
+     ------------------------------------------------------- */
   speech: {
     lang: "ja-JP",
-    rate: 1.0,
+    rate: 1.1,
     pitch: 1.0,
     volume: 1.0
   },
 
+  /* -------------------------------------------------------
+     待機時間設定（単位：ミリ秒）
+     ・betweenItemsMs : 各問題や説明の間の待機時間
+     ・thinkTimeMs    : 「答えましょう」から答え発表までの待機時間
+                        （自分で考える時間）
+     ------------------------------------------------------- */
   timing: {
     betweenItemsMs: 500,
     thinkTimeMs: 2000
   },
 
+  /* -------------------------------------------------------
+     音声・画面表示メッセージ定義
+     ※ 文言を変更したい場合はここだけ修正
+     ------------------------------------------------------- */
   messages: {
+
+    // 状態表示テキスト
     statusIdle: "状態: 待機中",
     statusExplain: "状態: アルファベット説明中",
     statusReview: "状態: 復習問題中",
     statusRandom: "状態: ランダム5問中",
 
+    // アルファベット説明モード用
     explainStart: "アルファベット説明を開始します",
     explainEnd: "説明を終わります",
 
+    // 復習問題モード用
     reviewStart: "復習問題を開始します",
     reviewEnd: "復習問題を終わります",
 
+    // ランダム問題モード用
     randomStart: "ランダム5問の問題を開始します",
     randomEnd: "ランダム5問の問題を終了します",
 
+    // 問題文テンプレート
     questionSuffix: "を点字で答えましょう。",
     answerPrefix: "答えは、",
     answerSuffix: "、です。",
 
+    // 2回押し確認メッセージ用
     confirmSuffix: "を開始する場合は、もう一度おしてください。"
   },
 
+  /* -------------------------------------------------------
+     ランダム出題数
+     ・randomCount : ランダム問題で出題する問題数
+     ------------------------------------------------------- */
   randomCount: 5,
 
+  /* -------------------------------------------------------
+     学習データ（アルファベットと点字説明）
+     ・ch   : アルファベット
+     ・desc : 点字説明（音声読み上げされる内容）
+     ------------------------------------------------------- */
   data: [
     {ch:"a",desc:"1の点"},
     {ch:"b",desc:"1,2の点"},
@@ -133,62 +174,67 @@ const btnRandom  = document.getElementById("btnRandom");
 const statusEl   = document.getElementById("status");
 const versionEl  = document.getElementById("versionDisplay");
 
-// ★バージョン表示
-versionEl.textContent = `${CONFIG.app.version}（作成：${CONFIG.app.created}）`;
+versionEl.textContent =
+`${CONFIG.app.version}（作成：${CONFIG.app.created}）`;
 
 let running = false;
 let pendingMode = null;
 let currentMode = null;
 
-function setStatus(text){ statusEl.textContent = text; }
+function setStatus(text){ statusEl.textContent=text; }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
 function speak(text){
   return new Promise((resolve,reject)=>{
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = CONFIG.speech.lang;
-    u.rate = CONFIG.speech.rate;
-    u.pitch = CONFIG.speech.pitch;
-    u.volume = CONFIG.speech.volume;
-    u.onend = resolve;
-    u.onerror = reject;
+    const u=new SpeechSynthesisUtterance(text);
+    u.lang=CONFIG.speech.lang;
+    u.rate=CONFIG.speech.rate;
+    u.pitch=CONFIG.speech.pitch;
+    u.volume=CONFIG.speech.volume;
+    u.onend=resolve;
+    u.onerror=reject;
     speechSynthesis.speak(u);
   });
 }
 
 function cancelSpeech(){ speechSynthesis.cancel(); }
 
+function stopRun(){
+  cancelSpeech();
+  running=false;
+  currentMode=null;
+  setStatus(CONFIG.messages.statusIdle);
+}
+
 function resetPending(){
-  pendingMode = null;
+  pendingMode=null;
   if(!running) setStatus(CONFIG.messages.statusIdle);
 }
 
 document.addEventListener("click",(e)=>{
   if(!pendingMode) return;
-  const isButton = e.target===btnExplain || e.target===btnReview || e.target===btnRandom;
+  const isButton =
+    e.target===btnExplain ||
+    e.target===btnReview ||
+    e.target===btnRandom;
   if(!isButton){
     cancelSpeech();
     resetPending();
   }
 },true);
 
-function stopRun(){
-  cancelSpeech();
-  running=false;
-  currentMode=null;
-  btnExplain.disabled=false;
-  btnReview.disabled=false;
-  btnRandom.disabled=false;
-  setStatus(CONFIG.messages.statusIdle);
-}
-
 async function handleTwoTap(mode,label){
 
-  if(running){
+  // 実行中で同じボタン → 停止
+  if(running && currentMode===mode){
     stopRun();
     return;
   }
 
+  // 実行中で別ボタン → 何もしない
+  if(running) return;
+
+  // 2回目押下（開始）
   if(pendingMode===mode){
     pendingMode=null;
     cancelSpeech();
@@ -196,6 +242,7 @@ async function handleTwoTap(mode,label){
     return;
   }
 
+  // 1回目押下（確認）
   pendingMode=mode;
   cancelSpeech();
   setStatus(`状態: ${label}（確認待ち）`);
@@ -212,10 +259,6 @@ function startMode(mode){
 async function runExplain(){
   running=true;
   setStatus(CONFIG.messages.statusExplain);
-  btnExplain.disabled=true;
-  btnReview.disabled=true;
-  btnRandom.disabled=true;
-
   await speak(CONFIG.messages.explainStart);
 
   for(const item of CONFIG.data){
@@ -231,10 +274,6 @@ async function runExplain(){
 async function runReview(){
   running=true;
   setStatus(CONFIG.messages.statusReview);
-  btnExplain.disabled=true;
-  btnReview.disabled=true;
-  btnRandom.disabled=true;
-
   await speak(CONFIG.messages.reviewStart);
 
   for(const item of CONFIG.data){
@@ -261,10 +300,6 @@ function pickUniqueRandom(n){
 async function runRandom(){
   running=true;
   setStatus(CONFIG.messages.statusRandom);
-  btnExplain.disabled=true;
-  btnReview.disabled=true;
-  btnRandom.disabled=true;
-
   await speak(CONFIG.messages.randomStart);
 
   const picked=pickUniqueRandom(CONFIG.randomCount);
