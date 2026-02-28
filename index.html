@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>点字アルファベット学習</title>
+<style>
+  body{
+    margin:0; padding:24px;
+    font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    background:#0b0f14; color:#fff;
+    display:flex; justify-content:center; align-items:center;
+    min-height:100vh;
+  }
+  .wrap{ width:min(640px,100%); display:flex; flex-direction:column; gap:20px; }
+  h1{ font-size:22px; margin:0 0 10px 0; }
+  button{
+    height:95px; font-size:26px; font-weight:700;
+    border-radius:16px; border:2px solid rgba(255,255,255,0.2);
+    background:#152033; color:#fff; width:100%;
+  }
+  button:disabled{ opacity:0.5; }
+  .status{ font-size:14px; opacity:0.8; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <h1>点字アルファベット学習</h1>
+
+  <button id="btnExplain">アルファベット説明</button>
+  <button id="btnReview">復習問題</button>
+  <button id="btnRandom">ランダム5問問題</button>
+
+  <div class="status" id="status">状態: 待機中</div>
+</div>
+
+<script>
+/* =========================================================
+ *  パラメータ宣言部（ここだけ編集すれば調整できるように）
+ * ========================================================= */
+const CONFIG = {
+  // 読み上げ設定（iPad Safari/Chrome 共通で効く）
+  speech: {
+    lang: "ja-JP",
+    rate: 1.0,    // ★読み上げ速度（0.1〜10。まずは 0.8〜1.2 が安全）
+    pitch: 1.0,   // 音程
+    volume: 1.0   // 音量
+  },
+
+  // 待機時間（ミリ秒）
+  timing: {
+    betweenItemsMs: 500,  // 次の問題/説明へ移る前の待機
+    thinkTimeMs: 2000     // 「答えましょう」→答え発表までの待機
+  },
+
+  // 画面文言（音声含む）
+  messages: {
+    statusIdle: "状態: 待機中",
+    statusExplain: "状態: アルファベット説明中",
+    statusReview: "状態: 復習問題中",
+    statusRandom: "状態: ランダム5問中",
+
+    explainStart: "アルファベット説明を開始します",
+    explainEnd: "説明を終わります",
+
+    reviewStart: "復習問題を開始します",
+    reviewEnd: "復習問題を終わります",
+
+    randomStart: "ランダム5問の問題を開始します",
+    randomEnd: "ランダム5問の問題を終了します",
+
+    questionSuffix: "を点字で答えましょう。",
+    answerPrefix: "答えは、",
+    answerSuffix: "、です。"
+  },
+
+  // 学習データ（a〜z）
+  data: [
+    {ch:"a",desc:"1の点"},
+    {ch:"b",desc:"1,2の点"},
+    {ch:"c",desc:"1,4の点"},
+    {ch:"d",desc:"1,4,5の点"},
+    {ch:"e",desc:"1,5の点"},
+    {ch:"f",desc:"1,2,4の点"},
+    {ch:"g",desc:"1,2,4,5の点"},
+    {ch:"h",desc:"1,2,5の点"},
+    {ch:"i",desc:"2,4の点"},
+    {ch:"j",desc:"2,4,5の点"},
+    {ch:"k",desc:"1,3の点"},
+    {ch:"l",desc:"1,2,3の点"},
+    {ch:"m",desc:"1,3,4の点"},
+    {ch:"n",desc:"1,3,4,5の点"},
+    {ch:"o",desc:"1,3,5の点"},
+    {ch:"p",desc:"1,2,3,4の点"},
+    {ch:"q",desc:"1,2,3,4,5の点"},
+    {ch:"r",desc:"1,2,3,5の点"},
+    {ch:"s",desc:"2,3,4の点"},
+    {ch:"t",desc:"2,3,4,5の点"},
+    {ch:"u",desc:"1,3,6の点"},
+    {ch:"v",desc:"1,2,3,6の点"},
+    {ch:"w",desc:"2,4,5,6の点"},
+    {ch:"x",desc:"1,3,4,6の点"},
+    {ch:"y",desc:"1,3,4,5,6の点"},
+    {ch:"z",desc:"1,3,5,6の点"}
+  ],
+
+  // ランダム出題数
+  randomCount: 5
+};
+/* =========================================================
+ *  ここから下はロジック（基本触らない想定）
+ * ========================================================= */
+
+const btnExplain = document.getElementById("btnExplain");
+const btnReview  = document.getElementById("btnReview");
+const btnRandom  = document.getElementById("btnRandom");
+const statusEl   = document.getElementById("status");
+
+let currentMode = null;
+let running = false;
+
+function setStatus(text){ statusEl.textContent = text; }
+
+function enableButtons(flag){
+  btnExplain.disabled = !flag;
+  btnReview.disabled  = !flag;
+  btnRandom.disabled  = !flag;
+}
+
+function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
+
+function stopSpeech(){
+  speechSynthesis.cancel();
+  running = false;
+  currentMode = null;
+  enableButtons(true);
+  setStatus(CONFIG.messages.statusIdle);
+}
+
+function speak(text){
+  return new Promise((resolve, reject) => {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang   = CONFIG.speech.lang;
+    u.rate   = CONFIG.speech.rate;
+    u.pitch  = CONFIG.speech.pitch;
+    u.volume = CONFIG.speech.volume;
+    u.onend = resolve;
+    u.onerror = reject;
+    speechSynthesis.speak(u);
+  });
+}
+
+async function runExplain(){
+  running = true;
+  setStatus(CONFIG.messages.statusExplain);
+  enableButtons(false);
+  btnExplain.disabled = false; // 同じボタンは押せる（再押下で停止のため）
+
+  await speak(CONFIG.messages.explainStart);
+
+  for(const item of CONFIG.data){
+    if(!running) return;
+    await speak(`${item.ch} は、 ${item.desc}、です。`);
+    await sleep(CONFIG.timing.betweenItemsMs);
+  }
+
+  if(running) await speak(CONFIG.messages.explainEnd);
+  stopSpeech();
+}
+
+async function runReviewSequential(){
+  running = true;
+  setStatus(CONFIG.messages.statusReview);
+  enableButtons(false);
+  btnReview.disabled = false;
+
+  await speak(CONFIG.messages.reviewStart);
+
+  for(const item of CONFIG.data){
+    if(!running) return;
+
+    await speak(`${item.ch} ${CONFIG.messages.questionSuffix}`);
+    await sleep(CONFIG.timing.thinkTimeMs);
+
+    await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
+    await sleep(CONFIG.timing.betweenItemsMs);
+  }
+
+  if(running) await speak(CONFIG.messages.reviewEnd);
+  stopSpeech();
+}
+
+function pickUniqueRandom(n){
+  const arr = [...CONFIG.data];
+  for(let i=arr.length-1;i>0;i--){
+    const j = Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]] = [arr[j],arr[i]];
+  }
+  return arr.slice(0, n);
+}
+
+async function runRandomQuiz(){
+  running = true;
+  setStatus(CONFIG.messages.statusRandom);
+  enableButtons(false);
+  btnRandom.disabled = false;
+
+  await speak(CONFIG.messages.randomStart);
+
+  const picked = pickUniqueRandom(CONFIG.randomCount);
+
+  for(const item of picked){
+    if(!running) return;
+
+    await speak(`${item.ch} ${CONFIG.messages.questionSuffix}`);
+    await sleep(CONFIG.timing.thinkTimeMs);
+
+    await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
+    await sleep(CONFIG.timing.betweenItemsMs);
+  }
+
+  if(running) await speak(CONFIG.messages.randomEnd);
+  stopSpeech();
+}
+
+/**
+ * 同じボタンをもう一度押したら停止。
+ * 別のボタンを押したら、現在の音声をキャンセルして新モード開始。
+ */
+function handleClick(mode){
+  if(running && currentMode === mode){
+    stopSpeech();
+    return;
+  }
+  speechSynthesis.cancel();
+  currentMode = mode;
+
+  if(mode==="explain") runExplain();
+  if(mode==="review")  runReviewSequential();
+  if(mode==="random")  runRandomQuiz();
+}
+
+btnExplain.addEventListener("click", () => handleClick("explain"));
+btnReview .addEventListener("click", () => handleClick("review"));
+btnRandom .addEventListener("click", () => handleClick("random"));
+
+// 初期状態
+setStatus(CONFIG.messages.statusIdle);
+</script>
+</body>
+</html>
