@@ -12,7 +12,19 @@
     display:flex; justify-content:center; align-items:center;
     min-height:100vh;
   }
-  .wrap{ width:min(640px,100%); display:flex; flex-direction:column; gap:20px; }
+  .version{
+    position:fixed;
+    top:10px;
+    left:14px;
+    font-size:13px;
+    opacity:0.7;
+  }
+  .wrap{
+    width:min(640px,100%);
+    display:flex;
+    flex-direction:column;
+    gap:20px;
+  }
   h1{ font-size:22px; margin:0 0 10px 0; }
   button{
     height:95px; font-size:26px; font-weight:700;
@@ -24,6 +36,8 @@
 </style>
 </head>
 <body>
+
+<div class="version" id="versionDisplay"></div>
 
 <div class="wrap">
   <h1>点字英語の基礎</h1>
@@ -37,24 +51,27 @@
 
 <script>
 /* =========================================================
- *  パラメータ宣言部（ここだけ編集すれば調整できるように）
+ *  パラメータ宣言部
  * ========================================================= */
 const CONFIG = {
-  // 読み上げ設定（iPad Safari/Chrome 共通で効く）
+
+  app: {
+    version: "v1.0.1",
+    created: "2026/03/01 01:30"
+  },
+
   speech: {
     lang: "ja-JP",
-    rate: 1.0,    // ★読み上げ速度（0.1〜10。まずは 0.8〜1.2 が安全）
-    pitch: 1.0,   // 音程
-    volume: 1.0   // 音量
+    rate: 1.0,
+    pitch: 1.0,
+    volume: 1.0
   },
 
-  // 待機時間（ミリ秒）
   timing: {
-    betweenItemsMs: 500,  // 次の問題/説明へ移る前の待機
-    thinkTimeMs: 2000     // 「答えましょう」→答え発表までの待機
+    betweenItemsMs: 500,
+    thinkTimeMs: 2000
   },
 
-  // 画面文言（音声含む）
   messages: {
     statusIdle: "状態: 待機中",
     statusExplain: "状態: アルファベット説明中",
@@ -72,10 +89,13 @@ const CONFIG = {
 
     questionSuffix: "を点字で答えましょう。",
     answerPrefix: "答えは、",
-    answerSuffix: "、です。"
+    answerSuffix: "、です。",
+
+    confirmSuffix: "を開始する場合は、もう一度おしてください。"
   },
 
-  // 学習データ（a〜z）
+  randomCount: 5,
+
   data: [
     {ch:"a",desc:"1の点"},
     {ch:"b",desc:"1,2の点"},
@@ -103,47 +123,32 @@ const CONFIG = {
     {ch:"x",desc:"1,3,4,6の点"},
     {ch:"y",desc:"1,3,4,5,6の点"},
     {ch:"z",desc:"1,3,5,6の点"}
-  ],
-
-  // ランダム出題数
-  randomCount: 5
+  ]
 };
-/* =========================================================
- *  ここから下はロジック（基本触らない想定）
- * ========================================================= */
+/* ========================================================= */
 
 const btnExplain = document.getElementById("btnExplain");
 const btnReview  = document.getElementById("btnReview");
 const btnRandom  = document.getElementById("btnRandom");
 const statusEl   = document.getElementById("status");
+const versionEl  = document.getElementById("versionDisplay");
 
-let currentMode = null;
+// ★バージョン表示
+versionEl.textContent = `${CONFIG.app.version}（作成：${CONFIG.app.created}）`;
+
 let running = false;
+let pendingMode = null;
+let currentMode = null;
 
 function setStatus(text){ statusEl.textContent = text; }
-
-function enableButtons(flag){
-  btnExplain.disabled = !flag;
-  btnReview.disabled  = !flag;
-  btnRandom.disabled  = !flag;
-}
-
-function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
-
-function stopSpeech(){
-  speechSynthesis.cancel();
-  running = false;
-  currentMode = null;
-  enableButtons(true);
-  setStatus(CONFIG.messages.statusIdle);
-}
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
 function speak(text){
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve,reject)=>{
     const u = new SpeechSynthesisUtterance(text);
-    u.lang   = CONFIG.speech.lang;
-    u.rate   = CONFIG.speech.rate;
-    u.pitch  = CONFIG.speech.pitch;
+    u.lang = CONFIG.speech.lang;
+    u.rate = CONFIG.speech.rate;
+    u.pitch = CONFIG.speech.pitch;
     u.volume = CONFIG.speech.volume;
     u.onend = resolve;
     u.onerror = reject;
@@ -151,11 +156,65 @@ function speak(text){
   });
 }
 
+function cancelSpeech(){ speechSynthesis.cancel(); }
+
+function resetPending(){
+  pendingMode = null;
+  if(!running) setStatus(CONFIG.messages.statusIdle);
+}
+
+document.addEventListener("click",(e)=>{
+  if(!pendingMode) return;
+  const isButton = e.target===btnExplain || e.target===btnReview || e.target===btnRandom;
+  if(!isButton){
+    cancelSpeech();
+    resetPending();
+  }
+},true);
+
+function stopRun(){
+  cancelSpeech();
+  running=false;
+  currentMode=null;
+  btnExplain.disabled=false;
+  btnReview.disabled=false;
+  btnRandom.disabled=false;
+  setStatus(CONFIG.messages.statusIdle);
+}
+
+async function handleTwoTap(mode,label){
+
+  if(running){
+    stopRun();
+    return;
+  }
+
+  if(pendingMode===mode){
+    pendingMode=null;
+    cancelSpeech();
+    startMode(mode);
+    return;
+  }
+
+  pendingMode=mode;
+  cancelSpeech();
+  setStatus(`状態: ${label}（確認待ち）`);
+  await speak(`${label}${CONFIG.messages.confirmSuffix}`);
+}
+
+function startMode(mode){
+  currentMode=mode;
+  if(mode==="explain") runExplain();
+  if(mode==="review")  runReview();
+  if(mode==="random")  runRandom();
+}
+
 async function runExplain(){
-  running = true;
+  running=true;
   setStatus(CONFIG.messages.statusExplain);
-  enableButtons(false);
-  btnExplain.disabled = false; // 同じボタンは押せる（再押下で停止のため）
+  btnExplain.disabled=true;
+  btnReview.disabled=true;
+  btnRandom.disabled=true;
 
   await speak(CONFIG.messages.explainStart);
 
@@ -166,88 +225,67 @@ async function runExplain(){
   }
 
   if(running) await speak(CONFIG.messages.explainEnd);
-  stopSpeech();
+  stopRun();
 }
 
-async function runReviewSequential(){
-  running = true;
+async function runReview(){
+  running=true;
   setStatus(CONFIG.messages.statusReview);
-  enableButtons(false);
-  btnReview.disabled = false;
+  btnExplain.disabled=true;
+  btnReview.disabled=true;
+  btnRandom.disabled=true;
 
   await speak(CONFIG.messages.reviewStart);
 
   for(const item of CONFIG.data){
     if(!running) return;
-
     await speak(`${item.ch} ${CONFIG.messages.questionSuffix}`);
     await sleep(CONFIG.timing.thinkTimeMs);
-
     await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
   if(running) await speak(CONFIG.messages.reviewEnd);
-  stopSpeech();
+  stopRun();
 }
 
 function pickUniqueRandom(n){
-  const arr = [...CONFIG.data];
+  const arr=[...CONFIG.data];
   for(let i=arr.length-1;i>0;i--){
-    const j = Math.floor(Math.random()*(i+1));
-    [arr[i],arr[j]] = [arr[j],arr[i]];
+    const j=Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]]=[arr[j],arr[i]];
   }
-  return arr.slice(0, n);
+  return arr.slice(0,n);
 }
 
-async function runRandomQuiz(){
-  running = true;
+async function runRandom(){
+  running=true;
   setStatus(CONFIG.messages.statusRandom);
-  enableButtons(false);
-  btnRandom.disabled = false;
+  btnExplain.disabled=true;
+  btnReview.disabled=true;
+  btnRandom.disabled=true;
 
   await speak(CONFIG.messages.randomStart);
 
-  const picked = pickUniqueRandom(CONFIG.randomCount);
+  const picked=pickUniqueRandom(CONFIG.randomCount);
 
   for(const item of picked){
     if(!running) return;
-
     await speak(`${item.ch} ${CONFIG.messages.questionSuffix}`);
     await sleep(CONFIG.timing.thinkTimeMs);
-
     await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
   if(running) await speak(CONFIG.messages.randomEnd);
-  stopSpeech();
+  stopRun();
 }
 
-/**
- * 同じボタンをもう一度押したら停止。
- * 別のボタンを押したら、現在の音声をキャンセルして新モード開始。
- */
-function handleClick(mode){
-  if(running && currentMode === mode){
-    stopSpeech();
-    return;
-  }
-  speechSynthesis.cancel();
-  currentMode = mode;
+btnExplain.addEventListener("click",()=>handleTwoTap("explain","アルファベット説明"));
+btnReview.addEventListener("click",()=>handleTwoTap("review","復習問題"));
+btnRandom.addEventListener("click",()=>handleTwoTap("random","ランダム5問問題"));
 
-  if(mode==="explain") runExplain();
-  if(mode==="review")  runReviewSequential();
-  if(mode==="random")  runRandomQuiz();
-}
-
-btnExplain.addEventListener("click", () => handleClick("explain"));
-btnReview .addEventListener("click", () => handleClick("review"));
-btnRandom .addEventListener("click", () => handleClick("random"));
-
-// 初期状態
 setStatus(CONFIG.messages.statusIdle);
 </script>
 </body>
-
 </html>
