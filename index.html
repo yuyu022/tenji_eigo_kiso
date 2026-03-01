@@ -57,8 +57,8 @@ button:disabled{ opacity:0.5; }
 ========================================================= */
 const CONFIG = {
   app: {
-    version: "v1.0.6",
-    created: "2026/03/01 22:10"
+    version: "v1.0.5",
+    created: "2026/03/01 22:15"
   },
 
   speech: {
@@ -70,8 +70,7 @@ const CONFIG = {
 
   timing: {
     betweenItemsMs: 500,
-    thinkTimeMs: 2000,
-    letterPauseMs: 250
+    thinkTimeMs: 2000
   },
 
   messages: {
@@ -149,9 +148,7 @@ let currentMode = null;
 function setStatus(text){ statusEl.textContent=text; }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
-/* =========================================================
-   iOS Safari 対策（読み上げ用テキスト正規化）
-========================================================= */
+/* iOS Safari 対策（読み上げ用テキスト正規化） */
 function normalizeForTTS(text){
   return text.replace(/(\d)\s*,\s*(?=\d)/g, "$1、");
 }
@@ -175,7 +172,6 @@ function stopRun(){
   cancelSpeech();
   running=false;
   currentMode=null;
-  pendingMode=null;
   setStatus(CONFIG.messages.statusIdle);
 }
 
@@ -184,63 +180,6 @@ function resetPending(){
   if(!running) setStatus(CONFIG.messages.statusIdle);
 }
 
-/* =========================================================
-   ★追加：iPadだけアルファベットをカタカナで読む
-========================================================= */
-const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-
-// 日本語で聞き取りやすい「読み」
-// ※好みに応じて「ズィー→ズィー/ゼット」など調整OK
-const LETTER_JA = {
-  a:"エー", b:"ビー", c:"シー", d:"ディー", e:"イー",
-  f:"エフ", g:"ジー", h:"エイチ", i:"アイ", j:"ジェイ",
-  k:"ケー", l:"エル", m:"エム", n:"エヌ", o:"オー",
-  p:"ピー", q:"キュー", r:"アール", s:"エス", t:"ティー",
-  u:"ユー", v:"ブイ", w:"ダブリュー", x:"エックス", y:"ワイ", z:"ゼット"
-};
-
-// 英字の読み上げ：iPadはカタカナ固定、Windows等は英語で試す
-async function speakLetter(ch){
-  const key = ch.toLowerCase();
-  const ja = LETTER_JA[key] || ch.toUpperCase();
-
-  if(IS_IOS){
-    // ★iPad Safari：カタカナで明瞭に
-    await speak(`アルファベット、${ja}`);
-    return;
-  }
-
-  // ★Windows/Chrome：英語で読ませる（失敗したらカタカナにフォールバック）
-  try{
-    await new Promise((resolve,reject)=>{
-      const u = new SpeechSynthesisUtterance(ch.toUpperCase());
-      u.lang = "en-US";
-      u.rate = 0.9;
-      u.pitch = 1.0;
-      u.volume = 1.0;
-      u.onend = resolve;
-      u.onerror = reject;
-      speechSynthesis.speak(u);
-    });
-  }catch(e){
-    await speak(`アルファベット、${ja}`);
-  }
-}
-
-// 出題の共通処理（英字→間→日本語問題文）
-async function askQuestion(item){
-  await speakLetter(item.ch);
-  await sleep(CONFIG.timing.letterPauseMs);
-  await speak(CONFIG.messages.questionSuffix);
-}
-
-async function sayAnswer(item){
-  await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
-}
-
-/* =========================================================
-   2回押し確認
-========================================================= */
 document.addEventListener("click",(e)=>{
   if(!pendingMode) return;
   const isButton =
@@ -255,13 +194,11 @@ document.addEventListener("click",(e)=>{
 },true);
 
 async function handleTwoTap(mode,label){
-
   // 実行中で同じボタン → 停止
   if(running && currentMode===mode){
     stopRun();
     return;
   }
-
   // 実行中で別ボタン → 何もしない
   if(running) return;
 
@@ -288,9 +225,10 @@ function startMode(mode){
   if(mode==="random")      runRandom();       // ランダム5
 }
 
-/* =========================================================
-   出題順を作る関数（重複なし）
-========================================================= */
+/* ====== 出題順を作る関数（重複なし） ======
+   Fisher-Yatesで配列全体をシャッフルして先頭からn個取る
+   → 同じ要素が2回出ることはない（重複なし）
+*/
 function pickUniqueRandom(n){
   const arr=[...CONFIG.data];
   for(let i=arr.length-1;i>0;i--){
@@ -300,9 +238,7 @@ function pickUniqueRandom(n){
   return arr.slice(0,n);
 }
 
-/* =========================================================
-   モード処理
-========================================================= */
+/* ====== モード処理 ====== */
 async function runExplain(){
   running=true;
   setStatus(CONFIG.messages.statusExplain);
@@ -310,12 +246,7 @@ async function runExplain(){
 
   for(const item of CONFIG.data){
     if(!running) return;
-
-    // 説明も英字を明瞭に（iPadはカタカナ）
-    await speakLetter(item.ch);
-    await sleep(CONFIG.timing.letterPauseMs);
-    await speak(`は、 ${item.desc}、です。`);
-
+    await speak(`${item.ch} は、 ${item.desc}、です。`);
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
@@ -328,11 +259,12 @@ async function runReview(){
   setStatus(CONFIG.messages.statusReview);
   await speak(CONFIG.messages.reviewStart);
 
+  // ★順番の復習（a→z）
   for(const item of CONFIG.data){
     if(!running) return;
-    await askQuestion(item);
+    await speak(`${item.ch} ${CONFIG.messages.questionSuffix}`);
     await sleep(CONFIG.timing.thinkTimeMs);
-    await sayAnswer(item);
+    await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
@@ -345,13 +277,14 @@ async function runShuffleAll(){
   setStatus(CONFIG.messages.statusShuffleAll);
   await speak(CONFIG.messages.shuffleAllStart);
 
+  // ★シャッフル26問（重複なし）
   const picked = pickUniqueRandom(CONFIG.data.length);
 
   for(const item of picked){
     if(!running) return;
-    await askQuestion(item);
+    await speak(`${item.ch} ${CONFIG.messages.questionSuffix}`);
     await sleep(CONFIG.timing.thinkTimeMs);
-    await sayAnswer(item);
+    await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
@@ -364,13 +297,14 @@ async function runRandom(){
   setStatus(CONFIG.messages.statusRandom);
   await speak(CONFIG.messages.randomStart);
 
+  // ★ランダム5問（重複なし）
   const picked=pickUniqueRandom(CONFIG.randomCount);
 
   for(const item of picked){
     if(!running) return;
-    await askQuestion(item);
+    await speak(`${item.ch} ${CONFIG.messages.questionSuffix}`);
     await sleep(CONFIG.timing.thinkTimeMs);
-    await sayAnswer(item);
+    await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
@@ -378,13 +312,11 @@ async function runRandom(){
   stopRun();
 }
 
-/* =========================================================
-   ボタン紐付け
-========================================================= */
+/* ====== ボタン紐付け ====== */
 btnExplain.addEventListener("click",()=>handleTwoTap("explain","アルファベット説明"));
 btnReview.addEventListener("click",()=>handleTwoTap("review","復習問題（順番）"));
-btnRandom.addEventListener("click",()=>handleTwoTap("random","ランダム5問問題"));
 btnShuffleAll.addEventListener("click",()=>handleTwoTap("shuffleAll","シャッフル26問問題"));
+btnRandom.addEventListener("click",()=>handleTwoTap("random","ランダム5問問題"));
 
 setStatus(CONFIG.messages.statusIdle);
 </script>
