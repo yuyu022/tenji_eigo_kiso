@@ -44,8 +44,9 @@ button:disabled{ opacity:0.5; }
   <h1>点字英語の基礎</h1>
 
   <button id="btnExplain">アルファベット説明</button>
-  <button id="btnReview">復習問題</button>
+  <button id="btnReview">復習問題（順番）</button>
   <button id="btnRandom">ランダム5問問題</button>
+  <button id="btnShuffleAll">シャッフル26問問題</button>
 
   <div class="status" id="status">状態: 待機中</div>
 </div>
@@ -55,26 +56,11 @@ button:disabled{ opacity:0.5; }
    パラメータ宣言部
 ========================================================= */
 const CONFIG = {
-
-  /* -------------------------------------------------------
-     アプリ基本情報
-     ・version  : 画面左上に表示されるバージョン番号
-     ・created  : 作成日時（表示専用）
-     ------------------------------------------------------- */
   app: {
-    version: "v1.0.4",
+    version: "v1.0.5",
     created: "2026/03/01 21:00"
   },
 
-  /* -------------------------------------------------------
-     音声読み上げ設定（SpeechSynthesis用）
-     ・lang   : 読み上げ言語（通常は ja-JP）
-     ・rate   : 読み上げ速度（1.0が標準）
-                0.8 = ややゆっくり
-                1.2 = やや速い
-     ・pitch  : 声の高さ（通常は 1.0）
-     ・volume : 音量（0.0〜1.0）
-     ------------------------------------------------------- */
   speech: {
     lang: "ja-JP",
     rate: 1.1,
@@ -82,61 +68,39 @@ const CONFIG = {
     volume: 1.0
   },
 
-  /* -------------------------------------------------------
-     待機時間設定（単位：ミリ秒）
-     ・betweenItemsMs : 各問題や説明の間の待機時間
-     ・thinkTimeMs    : 「答えましょう」から答え発表までの待機時間
-                        （自分で考える時間）
-     ------------------------------------------------------- */
   timing: {
     betweenItemsMs: 500,
     thinkTimeMs: 2000
   },
 
-  /* -------------------------------------------------------
-     音声・画面表示メッセージ定義
-     ※ 文言を変更したい場合はここだけ修正
-     ------------------------------------------------------- */
   messages: {
-
-    // 状態表示テキスト
     statusIdle: "状態: 待機中",
     statusExplain: "状態: アルファベット説明中",
-    statusReview: "状態: 復習問題中",
+    statusReview: "状態: 復習問題中（順番）",
+    statusShuffleAll: "状態: シャッフル26問中",
     statusRandom: "状態: ランダム5問中",
 
-    // アルファベット説明モード用
     explainStart: "アルファベット説明を開始します",
     explainEnd: "説明を終わります",
 
-    // 復習問題モード用
     reviewStart: "復習問題を開始します",
     reviewEnd: "復習問題を終わります",
 
-    // ランダム問題モード用
+    shuffleAllStart: "シャッフル26問の問題を開始します",
+    shuffleAllEnd: "シャッフル26問の問題を終了します",
+
     randomStart: "ランダム5問の問題を開始します",
     randomEnd: "ランダム5問の問題を終了します",
 
-    // 問題文テンプレート
     questionSuffix: "を点字で答えましょう。",
     answerPrefix: "答えは、",
     answerSuffix: "、です。",
 
-    // 2回押し確認メッセージ用
     confirmSuffix: "を開始する場合は、もう一度おしてください。"
   },
 
-  /* -------------------------------------------------------
-     ランダム出題数
-     ・randomCount : ランダム問題で出題する問題数
-     ------------------------------------------------------- */
   randomCount: 5,
 
-  /* -------------------------------------------------------
-     学習データ（アルファベットと点字説明）
-     ・ch   : アルファベット
-     ・desc : 点字説明（音声読み上げされる内容）
-     ------------------------------------------------------- */
   data: [
     {ch:"a",desc:"1の点"},
     {ch:"b",desc:"1,2の点"},
@@ -168,14 +132,14 @@ const CONFIG = {
 };
 /* ========================================================= */
 
-const btnExplain = document.getElementById("btnExplain");
-const btnReview  = document.getElementById("btnReview");
-const btnRandom  = document.getElementById("btnRandom");
-const statusEl   = document.getElementById("status");
-const versionEl  = document.getElementById("versionDisplay");
+const btnExplain    = document.getElementById("btnExplain");
+const btnReview     = document.getElementById("btnReview");
+const btnShuffleAll = document.getElementById("btnShuffleAll");
+const btnRandom     = document.getElementById("btnRandom");
+const statusEl      = document.getElementById("status");
+const versionEl     = document.getElementById("versionDisplay");
 
-versionEl.textContent =
-`${CONFIG.app.version}（作成：${CONFIG.app.created}）`;
+versionEl.textContent = `${CONFIG.app.version}（作成：${CONFIG.app.created}）`;
 
 let running = false;
 let pendingMode = null;
@@ -184,14 +148,8 @@ let currentMode = null;
 function setStatus(text){ statusEl.textContent=text; }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
-/* =========================================================
-   ★ 追加：iOS Safari 対策（読み上げ用テキスト正規化）
-   - iOSの日本語音声は "1,2,3" を "123" と読んでしまうことがあるため、
-     「数字,数字」のカンマを読点「、」に置換してから読み上げる。
-========================================================= */
+/* iOS Safari 対策（読み上げ用テキスト正規化） */
 function normalizeForTTS(text){
-  // 数字同士を区切っている「,」だけを「、」にする
-  // 例: "1,2,3,4の点" -> "1、2、3、4の点"
   return text.replace(/(\d)\s*,\s*(?=\d)/g, "$1、");
 }
 
@@ -227,6 +185,7 @@ document.addEventListener("click",(e)=>{
   const isButton =
     e.target===btnExplain ||
     e.target===btnReview ||
+    e.target===btnShuffleAll ||
     e.target===btnRandom;
   if(!isButton){
     cancelSpeech();
@@ -235,13 +194,11 @@ document.addEventListener("click",(e)=>{
 },true);
 
 async function handleTwoTap(mode,label){
-
   // 実行中で同じボタン → 停止
   if(running && currentMode===mode){
     stopRun();
     return;
   }
-
   // 実行中で別ボタン → 何もしない
   if(running) return;
 
@@ -262,11 +219,26 @@ async function handleTwoTap(mode,label){
 
 function startMode(mode){
   currentMode=mode;
-  if(mode==="explain") runExplain();
-  if(mode==="review")  runReview();
-  if(mode==="random")  runRandom();
+  if(mode==="explain")     runExplain();
+  if(mode==="review")      runReview();       // 順番
+  if(mode==="shuffleAll")  runShuffleAll();   // シャッフル26
+  if(mode==="random")      runRandom();       // ランダム5
 }
 
+/* ====== 出題順を作る関数（重複なし） ======
+   Fisher-Yatesで配列全体をシャッフルして先頭からn個取る
+   → 同じ要素が2回出ることはない（重複なし）
+*/
+function pickUniqueRandom(n){
+  const arr=[...CONFIG.data];
+  for(let i=arr.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+  return arr.slice(0,n);
+}
+
+/* ====== モード処理 ====== */
 async function runExplain(){
   running=true;
   setStatus(CONFIG.messages.statusExplain);
@@ -282,13 +254,12 @@ async function runExplain(){
   stopRun();
 }
 
-/* =========================================================
-   ※順番でA～Zの関数
 async function runReview(){
   running=true;
   setStatus(CONFIG.messages.statusReview);
   await speak(CONFIG.messages.reviewStart);
 
+  // ★順番の復習（a→z）
   for(const item of CONFIG.data){
     if(!running) return;
     await speak(`${item.ch} ${CONFIG.messages.questionSuffix}`);
@@ -300,14 +271,13 @@ async function runReview(){
   if(running) await speak(CONFIG.messages.reviewEnd);
   stopRun();
 }
-========================================================= */
 
- async function runReview(){
+async function runShuffleAll(){
   running=true;
-  setStatus(CONFIG.messages.statusReview);
-  await speak(CONFIG.messages.reviewStart);
+  setStatus(CONFIG.messages.statusShuffleAll);
+  await speak(CONFIG.messages.shuffleAllStart);
 
-  // ★追加：a〜zを全てランダム順に並べ替え
+  // ★シャッフル26問（重複なし）
   const picked = pickUniqueRandom(CONFIG.data.length);
 
   for(const item of picked){
@@ -318,16 +288,8 @@ async function runReview(){
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
-  if(running) await speak(CONFIG.messages.reviewEnd);
+  if(running) await speak(CONFIG.messages.shuffleAllEnd);
   stopRun();
-}
-function pickUniqueRandom(n){
-  const arr=[...CONFIG.data];
-  for(let i=arr.length-1;i>0;i--){
-    const j=Math.floor(Math.random()*(i+1));
-    [arr[i],arr[j]]=[arr[j],arr[i]];
-  }
-  return arr.slice(0,n);
 }
 
 async function runRandom(){
@@ -335,6 +297,7 @@ async function runRandom(){
   setStatus(CONFIG.messages.statusRandom);
   await speak(CONFIG.messages.randomStart);
 
+  // ★ランダム5問（重複なし）
   const picked=pickUniqueRandom(CONFIG.randomCount);
 
   for(const item of picked){
@@ -349,12 +312,13 @@ async function runRandom(){
   stopRun();
 }
 
+/* ====== ボタン紐付け ====== */
 btnExplain.addEventListener("click",()=>handleTwoTap("explain","アルファベット説明"));
-btnReview.addEventListener("click",()=>handleTwoTap("review","復習問題"));
+btnReview.addEventListener("click",()=>handleTwoTap("review","復習問題（順番）"));
+btnShuffleAll.addEventListener("click",()=>handleTwoTap("shuffleAll","シャッフル26問問題"));
 btnRandom.addEventListener("click",()=>handleTwoTap("random","ランダム5問問題"));
 
 setStatus(CONFIG.messages.statusIdle);
 </script>
 </body>
 </html>
-
