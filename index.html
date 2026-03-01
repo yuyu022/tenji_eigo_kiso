@@ -62,8 +62,8 @@ const CONFIG = {
      ・created  : 作成日時（表示専用）
      ------------------------------------------------------- */
   app: {
-    version: "v1.0.2",
-    created: "2026/03/01 01:45"
+    version: "v1.0.3",
+    created: "2026/03/01 19:00"
   },
 
   /* -------------------------------------------------------
@@ -184,9 +184,20 @@ let currentMode = null;
 function setStatus(text){ statusEl.textContent=text; }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
+/* =========================================================
+   ★ 追加：iOS Safari 対策（読み上げ用テキスト正規化）
+   - iOSの日本語音声は "1,2,3" を "123" と読んでしまうことがあるため、
+     「数字,数字」のカンマを読点「、」に置換してから読み上げる。
+========================================================= */
+function normalizeForTTS(text){
+  // 数字同士を区切っている「,」だけを「、」にする
+  // 例: "1,2,3,4の点" -> "1、2、3、4の点"
+  return text.replace(/(\d)\s*,\s*(?=\d)/g, "$1、");
+}
+
 function speak(text){
   return new Promise((resolve,reject)=>{
-    const u=new SpeechSynthesisUtterance(text);
+    const u=new SpeechSynthesisUtterance(normalizeForTTS(text));
     u.lang=CONFIG.speech.lang;
     u.rate=CONFIG.speech.rate;
     u.pitch=CONFIG.speech.pitch;
@@ -324,4 +335,3 @@ setStatus(CONFIG.messages.statusIdle);
 </script>
 </body>
 </html>
-
