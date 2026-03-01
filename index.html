@@ -62,8 +62,8 @@ const CONFIG = {
      ・created  : 作成日時（表示専用）
      ------------------------------------------------------- */
   app: {
-    version: "v1.0.3",
-    created: "2026/03/01 19:00"
+    version: "v1.0.4",
+    created: "2026/03/01 21:00"
   },
 
   /* -------------------------------------------------------
@@ -282,6 +282,8 @@ async function runExplain(){
   stopRun();
 }
 
+/* =========================================================
+   ※順番でA～Zの関数
 async function runReview(){
   running=true;
   setStatus(CONFIG.messages.statusReview);
@@ -298,7 +300,27 @@ async function runReview(){
   if(running) await speak(CONFIG.messages.reviewEnd);
   stopRun();
 }
+========================================================= */
 
+ async function runReview(){
+  running=true;
+  setStatus(CONFIG.messages.statusReview);
+  await speak(CONFIG.messages.reviewStart);
+
+  // ★追加：a〜zを全てランダム順に並べ替え
+  const picked = pickUniqueRandom(CONFIG.data.length);
+
+  for(const item of picked){
+    if(!running) return;
+    await speak(`${item.ch} ${CONFIG.messages.questionSuffix}`);
+    await sleep(CONFIG.timing.thinkTimeMs);
+    await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
+    await sleep(CONFIG.timing.betweenItemsMs);
+  }
+
+  if(running) await speak(CONFIG.messages.reviewEnd);
+  stopRun();
+}
 function pickUniqueRandom(n){
   const arr=[...CONFIG.data];
   for(let i=arr.length-1;i>0;i--){
@@ -335,3 +357,4 @@ setStatus(CONFIG.messages.statusIdle);
 </script>
 </body>
 </html>
+
