@@ -9,13 +9,8 @@ body{
   margin:0; padding:24px;
   font-family: system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
   background:#ffffff; color:#111;
-
-  /* 画面が小さい端末でも下が見切れないように */
-  display:flex;
-  justify-content:flex-start;
-  align-items:stretch;
-  min-height:100svh;
-  overflow:auto;
+  display:flex; justify-content:center; align-items:center;
+  min-height:100vh;
 }
 .version{
   position:fixed;
@@ -25,8 +20,6 @@ body{
 }
 .wrap{
   width:100%;
-  max-width:520px;
-  margin:0 auto;
   display:flex;
   flex-direction:column;
   gap:20px;
@@ -65,25 +58,20 @@ button:disabled{ opacity:0.5; }
 const CONFIG = {
   app: {
     version: "v1.0.6",
-    created: "2026/03/01 22:00"
+    created: "2026/03/01 22:10"
   },
 
   speech: {
-    // 日本語部分（説明/問題文/答え）
     lang: "ja-JP",
     rate: 1.1,
     pitch: 1.0,
-    volume: 1.0,
-
-    // 英字（A〜Z）部分
-    // まず en-US を狙い、無ければ en-GB / en を拾う
-    letterLangPriority: ["en-US", "en-GB", "en"]
+    volume: 1.0
   },
 
   timing: {
     betweenItemsMs: 500,
     thinkTimeMs: 2000,
-    letterPauseMs: 250   // 英字の後の短い間（聞き分けに効く）
+    letterPauseMs: 250
   },
 
   messages: {
@@ -161,9 +149,24 @@ let currentMode = null;
 function setStatus(text){ statusEl.textContent=text; }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 
-/* iOS Safari 対策（数字のカンマ読み） */
+/* =========================================================
+   iOS Safari 対策（読み上げ用テキスト正規化）
+========================================================= */
 function normalizeForTTS(text){
   return text.replace(/(\d)\s*,\s*(?=\d)/g, "$1、");
+}
+
+function speak(text){
+  return new Promise((resolve,reject)=>{
+    const u=new SpeechSynthesisUtterance(normalizeForTTS(text));
+    u.lang=CONFIG.speech.lang;
+    u.rate=CONFIG.speech.rate;
+    u.pitch=CONFIG.speech.pitch;
+    u.volume=CONFIG.speech.volume;
+    u.onend=resolve;
+    u.onerror=reject;
+    speechSynthesis.speak(u);
+  });
 }
 
 function cancelSpeech(){ speechSynthesis.cancel(); }
@@ -181,92 +184,63 @@ function resetPending(){
   if(!running) setStatus(CONFIG.messages.statusIdle);
 }
 
-/* ============================
-   音声（日本語 / 英字）
-============================ */
-let cachedVoices = [];
-let letterVoice = null;
+/* =========================================================
+   ★追加：iPadだけアルファベットをカタカナで読む
+========================================================= */
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
 
-// iPad Safariは voices が遅れてくることがある
-function refreshVoices(){
-  cachedVoices = speechSynthesis.getVoices() || [];
-  letterVoice = pickLetterVoice(cachedVoices);
-}
+// 日本語で聞き取りやすい「読み」
+// ※好みに応じて「ズィー→ズィー/ゼット」など調整OK
+const LETTER_JA = {
+  a:"エー", b:"ビー", c:"シー", d:"ディー", e:"イー",
+  f:"エフ", g:"ジー", h:"エイチ", i:"アイ", j:"ジェイ",
+  k:"ケー", l:"エル", m:"エム", n:"エヌ", o:"オー",
+  p:"ピー", q:"キュー", r:"アール", s:"エス", t:"ティー",
+  u:"ユー", v:"ブイ", w:"ダブリュー", x:"エックス", y:"ワイ", z:"ゼット"
+};
 
-// en-US優先で英字向き音声を拾う（無い場合はnull）
-function pickLetterVoice(voices){
-  if(!voices || voices.length===0) return null;
+// 英字の読み上げ：iPadはカタカナ固定、Windows等は英語で試す
+async function speakLetter(ch){
+  const key = ch.toLowerCase();
+  const ja = LETTER_JA[key] || ch.toUpperCase();
 
-  // 優先言語に合うものを探す
-  for(const lang of CONFIG.speech.letterLangPriority){
-    const v = voices.find(x => (x.lang || "").toLowerCase() === lang.toLowerCase());
-    if(v) return v;
+  if(IS_IOS){
+    // ★iPad Safari：カタカナで明瞭に
+    await speak(`アルファベット、${ja}`);
+    return;
   }
 
-  // en で始まるもの（en-AUなど）を拾う
-  const anyEn = voices.find(x => (x.lang || "").toLowerCase().startsWith("en"));
-  if(anyEn) return anyEn;
-
-  return null;
+  // ★Windows/Chrome：英語で読ませる（失敗したらカタカナにフォールバック）
+  try{
+    await new Promise((resolve,reject)=>{
+      const u = new SpeechSynthesisUtterance(ch.toUpperCase());
+      u.lang = "en-US";
+      u.rate = 0.9;
+      u.pitch = 1.0;
+      u.volume = 1.0;
+      u.onend = resolve;
+      u.onerror = reject;
+      speechSynthesis.speak(u);
+    });
+  }catch(e){
+    await speak(`アルファベット、${ja}`);
+  }
 }
 
-// 初期ロードと、voiceschangedイベントの両方で更新
-refreshVoices();
-if ("onvoiceschanged" in speechSynthesis) {
-  speechSynthesis.addEventListener("voiceschanged", refreshVoices);
-}
-
-function speakJa(text){
-  return new Promise((resolve,reject)=>{
-    const u=new SpeechSynthesisUtterance(normalizeForTTS(text));
-    u.lang=CONFIG.speech.lang;
-    u.rate=CONFIG.speech.rate;
-    u.pitch=CONFIG.speech.pitch;
-    u.volume=CONFIG.speech.volume;
-    u.onend=resolve;
-    u.onerror=reject;
-    speechSynthesis.speak(u);
-  });
-}
-
-// 英字は英語音声（あればvoice指定、なければlang指定だけでフォールバック）
-function speakLetter(ch){
-  return new Promise((resolve,reject)=>{
-    const u=new SpeechSynthesisUtterance(ch.toUpperCase());
-
-    // voice が取れていれば指定（iPad/Winどちらも安定しやすい）
-    if(letterVoice){
-      u.voice = letterVoice;
-      u.lang = letterVoice.lang;
-    }else{
-      // フォールバック：langだけ指定
-      u.lang = CONFIG.speech.letterLangPriority[0] || "en-US";
-    }
-
-    // 英字はゆっくりめが聞き取りやすい
-    u.rate=0.9;
-    u.pitch=1.0;
-    u.volume=1.0;
-
-    u.onend=resolve;
-    u.onerror=reject;
-    speechSynthesis.speak(u);
-  });
-}
-
-/* 1問の読み上げ（英字→間→日本語） */
+// 出題の共通処理（英字→間→日本語問題文）
 async function askQuestion(item){
   await speakLetter(item.ch);
   await sleep(CONFIG.timing.letterPauseMs);
-  await speakJa(CONFIG.messages.questionSuffix);
-}
-async function giveAnswer(item){
-  await speakJa(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
+  await speak(CONFIG.messages.questionSuffix);
 }
 
-/* ============================
+async function sayAnswer(item){
+  await speak(`${CONFIG.messages.answerPrefix} ${item.desc}${CONFIG.messages.answerSuffix}`);
+}
+
+/* =========================================================
    2回押し確認
-============================ */
+========================================================= */
 document.addEventListener("click",(e)=>{
   if(!pendingMode) return;
   const isButton =
@@ -282,11 +256,12 @@ document.addEventListener("click",(e)=>{
 
 async function handleTwoTap(mode,label){
 
-  // 実行中で同じボタン → 停止（残したいならこのまま）
+  // 実行中で同じボタン → 停止
   if(running && currentMode===mode){
     stopRun();
     return;
   }
+
   // 実行中で別ボタン → 何もしない
   if(running) return;
 
@@ -302,20 +277,20 @@ async function handleTwoTap(mode,label){
   pendingMode=mode;
   cancelSpeech();
   setStatus(`状態: ${label}（確認待ち）`);
-  await speakJa(`${label}${CONFIG.messages.confirmSuffix}`);
+  await speak(`${label}${CONFIG.messages.confirmSuffix}`);
 }
 
 function startMode(mode){
   currentMode=mode;
   if(mode==="explain")     runExplain();
-  if(mode==="review")      runReview();
-  if(mode==="shuffleAll")  runShuffleAll();
-  if(mode==="random")      runRandom();
+  if(mode==="review")      runReview();       // 順番
+  if(mode==="shuffleAll")  runShuffleAll();   // シャッフル26
+  if(mode==="random")      runRandom();       // ランダム5
 }
 
-/* ============================
-   出題順（重複なし）
-============================ */
+/* =========================================================
+   出題順を作る関数（重複なし）
+========================================================= */
 function pickUniqueRandom(n){
   const arr=[...CONFIG.data];
   for(let i=arr.length-1;i>0;i--){
@@ -325,73 +300,69 @@ function pickUniqueRandom(n){
   return arr.slice(0,n);
 }
 
-/* ============================
+/* =========================================================
    モード処理
-============================ */
+========================================================= */
 async function runExplain(){
   running=true;
   setStatus(CONFIG.messages.statusExplain);
-  await speakJa(CONFIG.messages.explainStart);
+  await speak(CONFIG.messages.explainStart);
 
   for(const item of CONFIG.data){
     if(!running) return;
-    // 説明も英字をクリアにしたいなら同じ方式
+
+    // 説明も英字を明瞭に（iPadはカタカナ）
     await speakLetter(item.ch);
     await sleep(CONFIG.timing.letterPauseMs);
-    await speakJa(`は、 ${item.desc}、です。`);
+    await speak(`は、 ${item.desc}、です。`);
+
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
-  if(running) await speakJa(CONFIG.messages.explainEnd);
+  if(running) await speak(CONFIG.messages.explainEnd);
   stopRun();
 }
 
 async function runReview(){
   running=true;
   setStatus(CONFIG.messages.statusReview);
-  await speakJa(CONFIG.messages.reviewStart);
+  await speak(CONFIG.messages.reviewStart);
 
   for(const item of CONFIG.data){
     if(!running) return;
     await askQuestion(item);
     await sleep(CONFIG.timing.thinkTimeMs);
-    await giveAnswer(item);
+    await sayAnswer(item);
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
-  if(running) await speakJa(CONFIG.messages.reviewEnd);
+  if(running) await speak(CONFIG.messages.reviewEnd);
   stopRun();
 }
 
 async function runShuffleAll(){
   running=true;
   setStatus(CONFIG.messages.statusShuffleAll);
-  await speakJa(CONFIG.messages.shuffleAllStart);
+  await speak(CONFIG.messages.shuffleAllStart);
 
   const picked = pickUniqueRandom(CONFIG.data.length);
-
-  // 念のため重複チェック（ログだけ）
-  const set = new Set(picked.map(x=>x.ch));
-  if(set.size !== picked.length){
-    console.error("重複検出:", picked.map(x=>x.ch));
-  }
 
   for(const item of picked){
     if(!running) return;
     await askQuestion(item);
     await sleep(CONFIG.timing.thinkTimeMs);
-    await giveAnswer(item);
+    await sayAnswer(item);
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
-  if(running) await speakJa(CONFIG.messages.shuffleAllEnd);
+  if(running) await speak(CONFIG.messages.shuffleAllEnd);
   stopRun();
 }
 
 async function runRandom(){
   running=true;
   setStatus(CONFIG.messages.statusRandom);
-  await speakJa(CONFIG.messages.randomStart);
+  await speak(CONFIG.messages.randomStart);
 
   const picked=pickUniqueRandom(CONFIG.randomCount);
 
@@ -399,17 +370,17 @@ async function runRandom(){
     if(!running) return;
     await askQuestion(item);
     await sleep(CONFIG.timing.thinkTimeMs);
-    await giveAnswer(item);
+    await sayAnswer(item);
     await sleep(CONFIG.timing.betweenItemsMs);
   }
 
-  if(running) await speakJa(CONFIG.messages.randomEnd);
+  if(running) await speak(CONFIG.messages.randomEnd);
   stopRun();
 }
 
-/* ============================
+/* =========================================================
    ボタン紐付け
-============================ */
+========================================================= */
 btnExplain.addEventListener("click",()=>handleTwoTap("explain","アルファベット説明"));
 btnReview.addEventListener("click",()=>handleTwoTap("review","復習問題（順番）"));
 btnRandom.addEventListener("click",()=>handleTwoTap("random","ランダム5問問題"));
@@ -419,4 +390,3 @@ setStatus(CONFIG.messages.statusIdle);
 </script>
 </body>
 </html>
-
